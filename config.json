@@ -1,0 +1,23 @@
+{
+    "server": {
+        "host": "localhost",
+        "port": 25566
+    },
+    "target": {
+        "host": "localhost",
+        "port": 12134
+    },
+    "logging": {
+        "log_all_traffic": true,
+        "compress_log_data": true,
+        "router_log_max_bytes": 5242880,
+        "router_log_backup_count": 5
+    },
+    "features": {
+        "force_stream_false": false, 
+        "parse_xml_tools": true,
+        "remove_think_tags": true,
+        "fix_stop_reason": true,
+        "enable_thinking": null
+    }
+}

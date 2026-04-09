@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Trae IDE
+.trae/
+
+# Environment
+.env
+.env.local
+
+# Testing
+.pytest_cache/
+
+# Build
+build/
+dist/
+*.egg-info/

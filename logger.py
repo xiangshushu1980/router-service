@@ -1,0 +1,39 @@
+import logging
+from logging.handlers import RotatingFileHandler
+
+from config import CONFIG
+
+# 配置日志 - 合并日志（按大小滚动）
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# 日志格式
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# 控制台输出（只显示 INFO 及以上）
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# 文件输出（按大小滚动，记录 INFO 及以上）
+file_handler = RotatingFileHandler(
+    "logs/router.log",
+    maxBytes=CONFIG.get("logging", {}).get("router_log_max_bytes", 5*1024*1024),
+    backupCount=CONFIG.get("logging", {}).get("router_log_backup_count", 5),
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+def set_debug_logging(enabled):
+    """设置是否启用 DEBUG 日志"""
+    if enabled:
+        logger.setLevel(logging.DEBUG)
+        console_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+        console_handler.setLevel(logging.INFO)
+        file_handler.setLevel(logging.INFO)

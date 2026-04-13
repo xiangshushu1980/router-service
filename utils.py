@@ -9,6 +9,7 @@ LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)  # 确保日志目录存在
 MESSAGE_LOG_FILE = LOG_DIR / "router_message.log"
 ERROR_LOG_FILE = LOG_DIR / "router_error.log"
+RESPONSE_LOG_FILE = LOG_DIR / "router_response.log"  # 用于记录所有下行消息
 
 # 压缩日志数据，避免重复内容
 def compress_log_data(data):
@@ -48,15 +49,52 @@ def log_complete_message(data, message_type):
     try:
         if message_type == "request":
             # 计算消息大小
-            message_json = json.dumps(data, ensure_ascii=False)
-            message_size = len(message_json.encode('utf-8'))
-            formatted_size = format_size(message_size)
+            request_json = json.dumps(data, ensure_ascii=False)
+            request_size = len(request_json.encode('utf-8'))
+            formatted_size = format_size(request_size)
             
-            # 直接写入文件，覆盖之前的内容
+            # 提取usage信息（如果有）
+            usage_info = data.get('usage', {})
+            input_tokens = usage_info.get('input_tokens', 'N/A')
+            output_tokens = usage_info.get('output_tokens', 'N/A')
+            total_tokens = 'N/A'
+            if input_tokens != 'N/A' and output_tokens != 'N/A':
+                try:
+                    total_tokens = input_tokens + output_tokens
+                except:
+                    pass
+            
+            # 写入消息日志文件，覆盖原有内容
             with open(MESSAGE_LOG_FILE, "w", encoding='utf-8') as f:
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
-                f.write(f"{timestamp} - DEBUG - === COMPLETE REQUEST (size: {formatted_size}) ===\n")
+                f.write(f"{timestamp} - DEBUG - === COMPLETE REQUEST (size: {formatted_size}, tokens: {total_tokens}) ===\n")
+                f.write(f"Input tokens: {input_tokens}, Output tokens: {output_tokens}\n")
                 f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        elif message_type == "response":
+            # 计算消息大小
+            response_json = json.dumps(data, ensure_ascii=False)
+            response_size = len(response_json.encode('utf-8'))
+            formatted_size = format_size(response_size)
+            
+            # 提取usage信息
+            usage_info = data.get('usage', {})
+            input_tokens = usage_info.get('input_tokens', 'N/A')
+            output_tokens = usage_info.get('output_tokens', 'N/A')
+            total_tokens = 'N/A'
+            if input_tokens != 'N/A' and output_tokens != 'N/A':
+                try:
+                    total_tokens = input_tokens + output_tokens
+                except:
+                    pass
+            
+            # 追加到响应日志文件，保留所有响应
+            with open(RESPONSE_LOG_FILE, "a", encoding='utf-8') as f:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+                f.write(f"{timestamp} - DEBUG - === COMPLETE RESPONSE (size: {formatted_size}, tokens: {total_tokens}) ===\n")
+                f.write(f"Input tokens: {input_tokens}, Output tokens: {output_tokens}\n")
+                # 美化输出，确保内容换行清晰
+                f.write(json.dumps(data, indent=4, ensure_ascii=False) + "\n")
+                f.write("\n" + "="*80 + "\n\n")  # 添加分隔线
         elif message_type == "error":
             # 压缩错误数据，只保留最近两条消息，不记录 tool 和 system
             compressed_data = compress_log_data(data)

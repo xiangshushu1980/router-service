@@ -43,6 +43,20 @@
   - `[SMART MODE] >>> FORWARD: content_block_stop for text`
   - 便于调试和监控流式处理流程
 
+### 🐛 Bug 修复
+
+- **修复 thinking 块中 tool_call 处理** (`processors.py`, `stream_processor.py`, `xml_parser.py`)
+  - 当模型错误地将 `tool_call` 放在 `thinking` 块中时，现在会正确解析为 `tool_use` 块
+  - 从 `thinking` 内容中移除已解析的 `tool_call` XML，保留纯思考内容
+  - 记录错误日志到 `router_error.log`，便于后续分析
+  - 同时支持非流式和流式响应处理
+
+### 🆕 新功能
+
+- **新增 `remove_parsed_tool_calls_from_thinking` 函数** (`xml_parser.py`)
+  - 从 thinking 内容中移除已解析的 tool_call XML 标签
+  - 清理多余空白行，保留其余思考内容
+
 ### 📝 技术细节
 
 | 文件 | 改动类型 | 说明 |
@@ -56,6 +70,9 @@
 | `handlers.py` | 新功能 | `_stream_legacy()` 原有模式保留 |
 | `handlers.py` | 新功能 | `_send_sse_event()` SSE事件发送辅助方法 |
 | `handlers.py` | 新功能 | text 块状态机处理逻辑 |
+| `processors.py` | Bug 修复 | thinking 块中 tool_call 处理 |
+| `stream_processor.py` | Bug 修复 | 流式模式下 thinking 块中 tool_call 处理 |
+| `xml_parser.py` | 新功能 | 新增 `remove_parsed_tool_calls_from_thinking` 函数 |
 | `config.json` | 配置 | 新增 `smart_streaming` 开关 |
 | `config.py` | 配置 | 新增 `SMART_STREAMING` 常量 |
 

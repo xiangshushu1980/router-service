@@ -78,6 +78,9 @@ class StreamHandler(AnthropicHandler):
         text_match_buffer = ""
         text_content_buffer = ""
         
+        # 存储所有原始事件，用于后续处理
+        self.smart_raw_events = []
+        
         logger.info("[SMART MODE] Starting...")
         
         while True:
@@ -101,6 +104,9 @@ class StreamHandler(AnthropicHandler):
                     try:
                         data = json.loads(value)
                         event_count += 1
+                        
+                        # 存储原始事件
+                        self.smart_raw_events.append((event_type, data))
                         
                         if event_type == "message_start":
                             message_data = data.get("message", {})
@@ -338,6 +344,56 @@ class StreamHandler(AnthropicHandler):
                     event_type = None
         
         logger.info(f"[SMART MODE] Completed, events: {event_count}")
+        
+        # 直接构建响应数据并记录
+        from utils import log_complete_message
+        
+        # 提取消息数据
+        response_message = None
+        content_blocks = []
+        usage_data = None
+        stop_reason_data = None
+        
+        current_block = None
+        current_text = ""
+        current_thinking = ""
+        
+        for event_type, data in self.smart_raw_events:
+            if event_type == "message_start":
+                response_message = data.get("message", {})
+            elif event_type == "content_block_start":
+                current_block = data.get("content_block", {})
+            elif event_type == "content_block_delta":
+                delta = data.get("delta", {})
+                if current_block and current_block.get("type") == "text":
+                    current_text += delta.get("text", "")
+                elif current_block and current_block.get("type") == "thinking":
+                    current_thinking += delta.get("thinking", "")
+            elif event_type == "content_block_stop":
+                if current_block:
+                    if current_block.get("type") == "text":
+                        content_blocks.append({"type": "text", "text": current_text})
+                    elif current_block.get("type") == "thinking":
+                        content_blocks.append({"type": "thinking", "thinking": current_thinking})
+                    elif current_block.get("type") == "tool_use":
+                        content_blocks.append(current_block)
+                    current_block = None
+                    current_text = ""
+                    current_thinking = ""
+            elif event_type == "message_delta":
+                usage_data = data.get("usage", {})
+                stop_reason_data = data.get("delta", {}).get("stop_reason")
+        
+        # 构建完整的响应数据
+        if response_message:
+            response_data = {
+                "message": response_message,
+                "content": content_blocks,
+                "stop_reason": stop_reason_data,
+                "usage": usage_data
+            }
+            log_complete_message(response_data, "response")
+            logger.info("Response recorded to router_message.log")
 
     def _send_sse_event(self, event_type, data):
         """发送单个SSE事件"""

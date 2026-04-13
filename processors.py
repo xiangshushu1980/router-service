@@ -1,8 +1,9 @@
 import json
 import traceback
+import datetime
 from pathlib import Path
 
-from xml_parser import parse_qwen_xml_tools_ClaudeCode
+from xml_parser import parse_qwen_xml_tools_ClaudeCode, remove_parsed_tool_calls_from_thinking
 from think_remover import strip_think_tags
 from stop_reason_fixer import fix_stop_reason
 from utils import log_complete_message
@@ -101,7 +102,30 @@ class ResponseProcessor:
                                 if PARSE_XML_TOOLS:
                                     parsed_tools = parse_qwen_xml_tools_ClaudeCode(thinking_content)
                                     if parsed_tools:
-                                        logger.info(f"Created ClaudeCode tools from thinking: {json.dumps(parsed_tools, ensure_ascii=False)}")
+                                        logger.warning(f"Found tool_call in thinking block, converting to normal tool_use: {json.dumps(parsed_tools, ensure_ascii=False)}")
+                                        
+                                        # 记录错误日志 - 模型错误地将tool_call放在thinking中
+                                        error_info = {
+                                            "error_type": "ToolCallInThinkingBlock",
+                                            "message": "Model incorrectly placed tool_call inside thinking block",
+                                            "original_thinking": thinking_content,
+                                            "parsed_tools": parsed_tools,
+                                            "timestamp": datetime.datetime.now().isoformat()
+                                        }
+                                        log_complete_message(error_info, "error")
+                                        
+                                        # 从thinking内容中移除已解析的tool_call XML
+                                        cleaned_thinking = remove_parsed_tool_calls_from_thinking(thinking_content, parsed_tools)
+                                        
+                                        # 如果有剩余的thinking内容，添加清理后的thinking块
+                                        if cleaned_thinking and cleaned_thinking.strip():
+                                            new_content.append({
+                                                "type": "thinking",
+                                                "thinking": cleaned_thinking,
+                                                "signature": item.get("signature", "")
+                                            })
+                                        
+                                        # 添加解析后的tool_use块
                                         for tool in parsed_tools:
                                             new_content.append(tool)
                                         continue
@@ -144,6 +168,9 @@ class ResponseProcessor:
                 logger.debug(f"Response modified: {json.dumps(changes, ensure_ascii=False)}")
                 # 记录到详细日志
                 log_complete_message({"changes": changes}, "changes")
+            
+            # 记录完整的响应消息
+            log_complete_message(response_json, "response")
             
         except Exception as e:
             error_info = {

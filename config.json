@@ -11,7 +11,8 @@
         "log_all_traffic": true,
         "compress_log_data": true,
         "router_log_max_bytes": 1048576,
-        "router_log_backup_count": 5
+        "router_log_backup_count": 5,
+        "debug": true
     },
     "features": {
         "force_stream_false": false, 

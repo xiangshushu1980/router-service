@@ -35,7 +35,7 @@ def parse_qwen_xml_tools(text):
 
 def parse_qwen_xml_tools_ClaudeCode(text):
     """解析Qwen XML工具调用为Claude Code格式"""
-    
+
     ## Thinking 里面发现的.
     ## <tool_call>
     # \n<function=Bash>\n
@@ -46,8 +46,8 @@ def parse_qwen_xml_tools_ClaudeCode(text):
     # Read BUGS text file\n
     # </parameter>\n
     # </function>
-    # \n</tool_call>    
-    
+    # \n</tool_call>
+
     ## 需要生成为列表.
     # {
     #   "type": "tool_use",
@@ -93,3 +93,23 @@ def parse_qwen_xml_tools_ClaudeCode(text):
         return results
     except Exception:
         return []
+
+
+def remove_parsed_tool_calls_from_thinking(text, parsed_tools):
+    """从thinking内容中移除已解析的tool_call XML，保留其余内容"""
+    if not parsed_tools:
+        return text
+
+    try:
+        # 匹配包含tool_call标签的function
+        func_re = re.compile(r'<tool_call>\s*<function=([\w.-]+)>([\s\S]*?)</function>\s*</tool_call>')
+
+        # 移除所有匹配的tool_call块
+        cleaned_text = func_re.sub('', text)
+
+        # 清理多余的空白行
+        cleaned_text = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_text)
+
+        return cleaned_text.strip()
+    except Exception:
+        return text

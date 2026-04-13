@@ -1,8 +1,10 @@
 import json
+import datetime
 from logger import logger
-from xml_parser import parse_qwen_xml_tools_ClaudeCode
+from xml_parser import parse_qwen_xml_tools_ClaudeCode, remove_parsed_tool_calls_from_thinking
 from think_remover import strip_think_tags
 from stop_reason_fixer import fix_stop_reason
+from utils import log_complete_message
 from config import PARSE_XML_TOOLS, REMOVE_THINK_TAGS, FIX_STOP_REASON
 
 class StreamProcessor:
@@ -157,14 +159,48 @@ class StreamProcessor:
                 self.smart_buffer_text += delta.get("text", "")
         elif event_type == "content_block_stop":
             if self.smart_current_block_type == "thinking":
-                self.smart_final_blocks.append({
-                    "type": "thinking",
-                    "thinking": self.smart_buffer_thinking
-                })
+                thinking_content = self.smart_buffer_thinking
+
                 if PARSE_XML_TOOLS:
-                    parsed_tools = parse_qwen_xml_tools_ClaudeCode(self.smart_buffer_thinking)
+                    parsed_tools = parse_qwen_xml_tools_ClaudeCode(thinking_content)
                     if parsed_tools:
+                        logger.warning(f"[SMART MODE] Found tool_call in thinking block, converting to normal tool_use: {json.dumps(parsed_tools, ensure_ascii=False)}")
+
+                        # 记录错误日志 - 模型错误地将tool_call放在thinking中
+                        error_info = {
+                            "error_type": "ToolCallInThinkingBlock",
+                            "message": "Model incorrectly placed tool_call inside thinking block (streaming mode)",
+                            "original_thinking": thinking_content,
+                            "parsed_tools": parsed_tools,
+                            "timestamp": datetime.datetime.now().isoformat()
+                        }
+                        log_complete_message(error_info, "error")
+
+                        # 从thinking内容中移除已解析的tool_call XML
+                        cleaned_thinking = remove_parsed_tool_calls_from_thinking(thinking_content, parsed_tools)
+
+                        # 如果有剩余的thinking内容，添加清理后的thinking块
+                        if cleaned_thinking and cleaned_thinking.strip():
+                            self.smart_final_blocks.append({
+                                "type": "thinking",
+                                "thinking": cleaned_thinking,
+                                "signature": ""
+                            })
+
+                        # 添加解析后的tool_use块
                         self.smart_final_blocks.extend(parsed_tools)
+                    else:
+                        # 没有解析到工具调用，正常添加thinking块
+                        self.smart_final_blocks.append({
+                            "type": "thinking",
+                            "thinking": thinking_content
+                        })
+                else:
+                    # 未启用XML工具解析，正常添加thinking块
+                    self.smart_final_blocks.append({
+                        "type": "thinking",
+                        "thinking": thinking_content
+                    })
             elif self.smart_current_block_type == "text":
                 text = self.smart_buffer_text
                 if PARSE_XML_TOOLS:
@@ -203,6 +239,26 @@ class StreamProcessor:
             self._process_content_smart()
         else:
             self._process_content_legacy()
+        
+        # 记录完整的流式响应消息
+        if self.smart_streaming:
+            if self.smart_message:
+                response_data = {
+                    "message": self.smart_message,
+                    "content": self.smart_final_blocks,
+                    "stop_reason": self.smart_stop_reason,
+                    "usage": self.smart_usage
+                }
+                log_complete_message(response_data, "response")
+        else:
+            if self.message:
+                response_data = {
+                    "message": self.message,
+                    "content": self.content_blocks,
+                    "stop_reason": self.stop_reason,
+                    "usage": self.usage
+                }
+                log_complete_message(response_data, "response")
     
     def _process_content_legacy(self):
         """旧模式：处理累积的内容"""

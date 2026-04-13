@@ -1,5 +1,106 @@
 # Router 更新日志
 
+## [Unreleased] - 2026-04-13
+
+### 🏗️ 代码重构
+
+- **handlers.py 文件分割** (`handlers.py`, `base_handler.py`, `anthropic_handler.py`, `stream_handlers.py`)
+  - 将 `handlers.py` 分割成多个功能明确的模块
+  - `base_handler.py`：包含基础HTTP请求处理逻辑
+  - `anthropic_handler.py`：包含处理Anthropic请求的逻辑
+  - `stream_handlers.py`：包含流式处理的逻辑
+  - 简化了 `handlers.py` 文件，使其导入并使用新创建的模块
+  - 创建了 `__init__.py` 文件，导出主要的类和方法
+
+### 🐛 Bug 修复
+
+- **修复导入问题** (`handlers.py`, `base_handler.py`, `anthropic_handler.py`, `stream_handlers.py`, `processors.py`, `stream_processor.py`, `utils.py`, `logger.py`)
+  - 将相对导入改为绝对导入，确保直接运行 `router_server.py` 时不会报错
+  - 修复了 `anthropic_handler.py` 文件中缺少 `LOG_ALL_TRAFFIC`、`COMPRESS_LOG_DATA` 和 `compress_log_data` 的导入问题
+
+### 🆕 新功能
+
+- **新增混合流式模式 (Smart Streaming)** (`handlers.py`, `config.json`)
+  - 新增配置项 `smart_streaming`，默认 `false`
+  - **thinking 块**：实时流式转发，每个 delta 立即发送
+  - **tool_use 块**：实时流式转发
+  - **text 块**：智能流式转发（见下方状态机实现）
+  - 保留原有 `legacy` 模式，通过配置切换
+
+- **text 块智能流式转发** (`handlers.py`)
+  - 使用状态机实现，4个状态：`NORMAL` → `MATCHING` → `BUFFERING_THINK` / `BUFFERING_TOOL`
+  - **NORMAL 状态**：普通文本直接流式转发，检测到 `<` 进入 MATCHING
+  - **MATCHING 状态**：累积字符判断是否匹配 `<think` 或 `<tool_call`
+    - 匹配成功 → 进入对应缓冲状态
+    - 匹配失败 → 将累积字符发送，回到 NORMAL
+  - **BUFFERING_THINK 状态**：缓冲直到 `</think`，处理后发送（或移除）
+  - **BUFFERING_TOOL 状态**：缓冲直到 `</tool_call`，解析为 tool_use 块
+  - 优化：NORMAL 状态下无 `<` 的 delta 直接转发，避免逐字符处理
+
+- **新增流式处理日志标记** (`handlers.py`)
+  - `[SMART MODE] >>> FORWARD: text block #N (smart streaming)`
+  - `[SMART MODE] >>> FORWARD: thinking block #N (immediate)`
+  - `[SMART MODE] >>> FORWARD: content_block_stop for text`
+  - 便于调试和监控流式处理流程
+
+### 📝 技术细节
+
+| 文件 | 改动类型 | 说明 |
+|------|----------|------|
+| `handlers.py` | 代码重构 | 简化文件，导入并使用新创建的模块 |
+| `base_handler.py` | 代码重构 | 提取基础HTTP请求处理逻辑 |
+| `anthropic_handler.py` | 代码重构 | 提取处理Anthropic请求的逻辑 |
+| `stream_handlers.py` | 代码重构 | 提取流式处理的逻辑 |
+| `__init__.py` | 代码重构 | 导出主要的类和方法 |
+| `handlers.py` | 新功能 | `_stream_smart()` 智能流式转发方法 |
+| `handlers.py` | 新功能 | `_stream_legacy()` 原有模式保留 |
+| `handlers.py` | 新功能 | `_send_sse_event()` SSE事件发送辅助方法 |
+| `handlers.py` | 新功能 | text 块状态机处理逻辑 |
+| `config.json` | 配置 | 新增 `smart_streaming` 开关 |
+| `config.py` | 配置 | 新增 `SMART_STREAMING` 常量 |
+
+### 状态机流程图
+
+```
+┌─────────┐    收到 '<'    ┌───────────┐
+│ NORMAL  │ ──────────────>│ MATCHING  │
+│ (流式)  │                │ (判断中)  │
+└────┬────┘                └─────┬─────┘
+     │                           │
+     │ 无 '<' 的 delta           │ 匹配 <think
+     │ 直接转发                   │
+     │                           ▼
+     │                    ┌──────────────┐
+     │                    │BUFFERING_THINK│
+     │                    │ 缓冲到 </think│
+     │                    └──────┬───────┘
+     │                           │
+     │                           │ 处理完成
+     │                           ▼
+     │                    ┌──────────────┐
+     │                    │   NORMAL     │
+     │                    └──────────────┘
+     │                           
+     │                           │ 匹配 <tool_call
+     │                           ▼
+     │                    ┌──────────────┐
+     │                    │BUFFERING_TOOL│
+     │                    │缓冲到 </tool_call│
+     │                    └──────┬───────┘
+     │                           │
+     │                           │ 解析为 tool_use
+     │                           ▼
+     │                    ┌──────────────┐
+     │                    │   NORMAL     │
+     │                    └──────────────┘
+     │                           
+     │ 匹配失败                   
+     │ (如 <div>, <span>)        
+     └────────────────────────────┘
+```
+
+---
+
 ## [Unreleased] - 2026-04-09
 
 ### 🆕 新功能

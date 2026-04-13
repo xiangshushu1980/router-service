@@ -106,13 +106,6 @@ class ResponseProcessor:
                                             new_content.append(tool)
                                         continue
                                 
-                                # 移除 think 标签（可配置）
-                                if REMOVE_THINK_TAGS:
-                                    stripped_content = strip_think_tags(thinking_content)
-                                    if stripped_content != thinking_content:
-                                        item['thinking'] = stripped_content
-                                        logger.debug("Removed think tags from thinking content")
-                                
                                 new_content.append(item)
                             else:
                                 new_content.append(item)

@@ -6,9 +6,12 @@ from stop_reason_fixer import fix_stop_reason
 from config import PARSE_XML_TOOLS, REMOVE_THINK_TAGS, FIX_STOP_REASON
 
 class StreamProcessor:
-    """流式响应处理器"""
+    """流式响应处理器 - 支持两种模式"""
     
-    def __init__(self):
+    def __init__(self, smart_streaming=False):
+        self.smart_streaming = smart_streaming
+        
+        # 旧模式状态
         self.message = None
         self.content_blocks = []
         self.current_block = None
@@ -17,6 +20,21 @@ class StreamProcessor:
         self.current_tool_input = ""
         self.usage = None
         self.stop_reason = None
+        
+        # 混合流式状态
+        self._reset_smart_state()
+    
+    def _reset_smart_state(self):
+        """重置混合流式状态"""
+        self.smart_current_block_type = None
+        self.smart_buffer_text = ""
+        self.smart_buffer_thinking = ""
+        self.smart_final_blocks = []
+        self.smart_raw_events = []  # 保存原始事件用于重新生成
+        self.smart_current_index = 0
+        self.smart_message = None
+        self.smart_usage = None
+        self.smart_stop_reason = None
     
     def _detect_changes(self, original, modified):
         """检测两个对象之间的变化"""
@@ -63,7 +81,14 @@ class StreamProcessor:
         return changes
         
     def process_event(self, event_type, data):
-        """处理单个流式事件"""
+        """处理单个流式事件 - 分发到对应模式"""
+        if self.smart_streaming:
+            self._process_event_smart(event_type, data)
+        else:
+            self._process_event_legacy(event_type, data)
+    
+    def _process_event_legacy(self, event_type, data):
+        """旧模式：累积所有事件"""
         if event_type == "message_start":
             self.message = data.get("message", {})
             logger.debug(f"Message start: {json.dumps(self.message, ensure_ascii=False)}")
@@ -115,12 +140,75 @@ class StreamProcessor:
         elif event_type == "message_stop":
             pass
     
+    def _process_event_smart(self, event_type, data):
+        """混合流式模式：根据块类型选择处理方式"""
+        self.smart_raw_events.append((event_type, data))
+        
+        if event_type == "message_start":
+            self.smart_message = data.get("message", {})
+        elif event_type == "content_block_start":
+            content_block = data.get("content_block", {})
+            self.smart_current_block_type = content_block.get("type")
+        elif event_type == "content_block_delta":
+            delta = data.get("delta", {})
+            if self.smart_current_block_type == "thinking":
+                self.smart_buffer_thinking += delta.get("thinking", "")
+            elif self.smart_current_block_type == "text":
+                self.smart_buffer_text += delta.get("text", "")
+        elif event_type == "content_block_stop":
+            if self.smart_current_block_type == "thinking":
+                self.smart_final_blocks.append({
+                    "type": "thinking",
+                    "thinking": self.smart_buffer_thinking
+                })
+                if PARSE_XML_TOOLS:
+                    parsed_tools = parse_qwen_xml_tools_ClaudeCode(self.smart_buffer_thinking)
+                    if parsed_tools:
+                        self.smart_final_blocks.extend(parsed_tools)
+            elif self.smart_current_block_type == "text":
+                text = self.smart_buffer_text
+                if PARSE_XML_TOOLS:
+                    parsed_tools = parse_qwen_xml_tools_ClaudeCode(text)
+                    if parsed_tools:
+                        self.smart_final_blocks.extend(parsed_tools)
+                    else:
+                        if REMOVE_THINK_TAGS:
+                            text = strip_think_tags(text)
+                        self.smart_final_blocks.append({"type": "text", "text": text})
+                else:
+                    if REMOVE_THINK_TAGS:
+                        text = strip_think_tags(text)
+                    self.smart_final_blocks.append({"type": "text", "text": text})
+            elif self.smart_current_block_type == "tool_use":
+                tool_block = None
+                for evt_type, evt_data in self.smart_raw_events:
+                    if evt_type == "content_block_start":
+                        cb = evt_data.get("content_block", {})
+                        if cb.get("type") == "tool_use":
+                            tool_block = dict(cb)
+                            break
+                if tool_block:
+                    self.smart_final_blocks.append(tool_block)
+            
+            self.smart_current_block_type = None
+            self.smart_buffer_text = ""
+            self.smart_buffer_thinking = ""
+        elif event_type == "message_delta":
+            self.smart_usage = data.get("usage", {})
+            self.smart_stop_reason = data.get("delta", {}).get("stop_reason")
+    
     def process_content(self):
         """处理累积的内容"""
+        if self.smart_streaming:
+            self._process_content_smart()
+        else:
+            self._process_content_legacy()
+    
+    def _process_content_legacy(self):
+        """旧模式：处理累积的内容"""
         if not self.content_blocks:
             return
         
-        # 如果没有任何功能开启，直接返回
         if not PARSE_XML_TOOLS and not REMOVE_THINK_TAGS and not FIX_STOP_REASON:
             return
         
@@ -128,8 +216,6 @@ class StreamProcessor:
             "content_blocks": self._deep_copy(self.content_blocks),
             "stop_reason": self.stop_reason
         }
-        
-        logger.info(f"Original content blocks: {json.dumps(self.content_blocks, ensure_ascii=False)}")
         
         new_blocks = []
         for block in self.content_blocks:
@@ -156,9 +242,6 @@ class StreamProcessor:
                         new_blocks.extend(parsed_tools)
                         continue
                 
-                if REMOVE_THINK_TAGS:
-                    thinking = strip_think_tags(thinking)
-                
                 new_blocks.append({"type": "thinking", "thinking": thinking})
             
             else:
@@ -178,11 +261,14 @@ class StreamProcessor:
         
         changes = self._detect_changes(original_data, modified_data)
         if changes:
-            logger.info("-" * 80)
-            logger.info("RESPONSE CHANGES:")
-            for change in changes:
-                logger.info(f"  {json.dumps(change, ensure_ascii=False)}")
-            logger.info("-" * 80)
+            logger.info(f"Response modified: {json.dumps(changes, ensure_ascii=False)}")
+    
+    def _process_content_smart(self):
+        """混合流式模式：处理已完成的块"""
+        if FIX_STOP_REASON and self.smart_stop_reason:
+            has_tools = any(b.get("type") == "tool_use" for b in self.smart_final_blocks)
+            if has_tools and self.smart_stop_reason in ("end_turn", "stop", "eos_token", "", None):
+                self.smart_stop_reason = "tool_use"
     
     def _deep_copy(self, obj):
         """深拷贝对象（比 json.loads(json.dumps) 更快）"""
@@ -195,6 +281,13 @@ class StreamProcessor:
     
     def generate_events(self):
         """重新生成流式事件"""
+        if self.smart_streaming:
+            return self._generate_events_smart()
+        else:
+            return self._generate_events_legacy()
+    
+    def _generate_events_legacy(self):
+        """旧模式：重新生成事件"""
         events = []
         
         if self.message:
@@ -247,6 +340,66 @@ class StreamProcessor:
             delta["delta"]["stop_reason"] = self.stop_reason
         if self.usage:
             delta["usage"] = self.usage
+        events.append(("message_delta", delta))
+        
+        events.append(("message_stop", {"type": "message_stop"}))
+        
+        return events
+    
+    def _generate_events_smart(self):
+        """混合流式模式：重新生成事件"""
+        events = []
+        
+        if self.smart_message:
+            msg = dict(self.smart_message)
+            msg["content"] = []
+            events.append(("message_start", {"type": "message_start", "message": msg}))
+        
+        for i, block in enumerate(self.smart_final_blocks):
+            events.append(("content_block_start", {
+                "type": "content_block_start",
+                "index": i,
+                "content_block": block
+            }))
+            
+            if block.get("type") == "text":
+                events.append(("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": i,
+                    "delta": {
+                        "type": "text_delta",
+                        "text": block.get("text", "")
+                    }
+                }))
+            elif block.get("type") == "thinking":
+                events.append(("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": i,
+                    "delta": {
+                        "type": "thinking_delta",
+                        "thinking": block.get("thinking", "")
+                    }
+                }))
+            elif block.get("type") == "tool_use":
+                events.append(("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": i,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": json.dumps(block.get("input", {}))
+                    }
+                }))
+            
+            events.append(("content_block_stop", {
+                "type": "content_block_stop",
+                "index": i
+            }))
+        
+        delta = {"type": "message_delta", "delta": {}}
+        if self.smart_stop_reason:
+            delta["delta"]["stop_reason"] = self.smart_stop_reason
+        if self.smart_usage:
+            delta["usage"] = self.smart_usage
         events.append(("message_delta", delta))
         
         events.append(("message_stop", {"type": "message_stop"}))

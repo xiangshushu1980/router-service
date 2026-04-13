@@ -28,7 +28,8 @@ except Exception as e:
             "parse_xml_tools": True,
             "remove_think_tags": True,
             "fix_stop_reason": True,
-            "enable_thinking": False
+            "enable_thinking": False,
+            "smart_streaming": False
         }
     }
 
@@ -43,3 +44,4 @@ PARSE_XML_TOOLS = FEATURES.get("parse_xml_tools", True)
 REMOVE_THINK_TAGS = FEATURES.get("remove_think_tags", True)
 FIX_STOP_REASON = FEATURES.get("fix_stop_reason", True)
 ENABLE_THINKING = FEATURES.get("enable_thinking", None)
+SMART_STREAMING = FEATURES.get("smart_streaming", False)

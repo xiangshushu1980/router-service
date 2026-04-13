@@ -1,7 +1,12 @@
 import logging
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from config import CONFIG
+
+# 日志目录路径，基于当前脚本所在目录
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)  # 确保日志目录存在
 
 # 配置日志 - 合并日志（按大小滚动）
 logger = logging.getLogger(__name__)
@@ -18,7 +23,7 @@ logger.addHandler(console_handler)
 
 # 文件输出（按大小滚动，记录 INFO 及以上）
 file_handler = RotatingFileHandler(
-    "logs/router.log",
+    LOG_DIR / "router.log",
     maxBytes=CONFIG.get("logging", {}).get("router_log_max_bytes", 5*1024*1024),
     backupCount=CONFIG.get("logging", {}).get("router_log_backup_count", 5),
     encoding='utf-8'

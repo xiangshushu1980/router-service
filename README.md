@@ -60,7 +60,9 @@ The core functionality of this service is targeted content processing to resolve
 
 ### Configuration
 
-All features are configurable via `config.json`:
+All features are configurable via `config.json`. For detailed configuration options, see [CONFIG.md](CONFIG.md).
+
+Quick reference:
 
 ```json
 {
@@ -166,12 +168,7 @@ python test_message_processor.py
 
 ### Configuration Options
 
-See `config.json` for all available options:
-
-- Server settings (host, port)
-- Target settings (LM Studio address)
-- Logging settings
-- Feature toggles
+See [CONFIG.md](CONFIG.md) for detailed configuration documentation.
 
 ## License
 

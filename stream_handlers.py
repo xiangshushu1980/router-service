@@ -77,6 +77,7 @@ class StreamHandler(AnthropicHandler):
         text_state = "NORMAL"
         text_match_buffer = ""
         text_content_buffer = ""
+        thinking_buffer = ""
         
         # 存储所有原始事件，用于后续处理
         self.smart_raw_events = []
@@ -251,6 +252,8 @@ class StreamHandler(AnthropicHandler):
                                                 text_content_buffer = ""
                                                 text_state = "NORMAL"
                             elif current_block_type == "thinking" and delta_type == "thinking_delta":
+                                thinking_content = delta.get("thinking", "")
+                                thinking_buffer += thinking_content
                                 self._send_sse_event("content_block_delta", data)
                             elif current_block_type == "tool_use" and delta_type == "input_json_delta":
                                 self._send_sse_event("content_block_delta", data)
@@ -323,6 +326,79 @@ class StreamHandler(AnthropicHandler):
                                 text_content_buffer = ""
                                 text_state = "NORMAL"
                                 text_block_index = -1
+                            elif current_block_type == "thinking":
+                                # 检查thinking块中是否包含XML tool_call
+                                if PARSE_XML_TOOLS and thinking_buffer:
+                                    from xml_parser import parse_qwen_xml_tools_ClaudeCode, remove_parsed_tool_calls_from_thinking
+                                    parsed_tools = parse_qwen_xml_tools_ClaudeCode(thinking_buffer)
+                                    if parsed_tools:
+                                        logger.warning(f"[SMART MODE] Found tool_call in thinking block, converting to normal tool_use: {json.dumps(parsed_tools, ensure_ascii=False)}")
+                                        
+                                        # 记录错误日志 - 模型错误地将tool_call放在thinking中
+                                        from utils import log_complete_message
+                                        error_info = {
+                                            "error_type": "ToolCallInThinkingBlock",
+                                            "message": "Model incorrectly placed tool_call inside thinking block (smart streaming mode)",
+                                            "original_thinking": thinking_buffer,
+                                            "parsed_tools": parsed_tools
+                                        }
+                                        log_complete_message(error_info, "error")
+                                        
+                                        # 从thinking内容中移除已解析的tool_call XML
+                                        cleaned_thinking = remove_parsed_tool_calls_from_thinking(thinking_buffer, parsed_tools)
+                                        
+                                        # 如果有剩余的thinking内容，发送清理后的thinking块
+                                        if cleaned_thinking and cleaned_thinking.strip():
+                                            # 发送修正后的thinking delta
+                                            self._send_sse_event("content_block_delta", {
+                                                "type": "content_block_delta",
+                                                "index": current_block_index,
+                                                "delta": {
+                                                    "type": "thinking_delta",
+                                                    "thinking": cleaned_thinking
+                                                }
+                                            })
+                                        else:
+                                            # 如果没有剩余内容，发送空的thinking块
+                                            self._send_sse_event("content_block_delta", {
+                                                "type": "content_block_delta",
+                                                "index": current_block_index,
+                                                "delta": {
+                                                    "type": "thinking_delta",
+                                                    "thinking": ""
+                                                }
+                                            })
+                                        
+                                        # 发送thinking块结束事件
+                                        self._send_sse_event("content_block_stop", data)
+                                        
+                                        # 添加解析后的tool_use块
+                                        for tool_block in parsed_tools:
+                                            current_block_index += 1
+                                            self._send_sse_event("content_block_start", {
+                                                "type": "content_block_start",
+                                                "index": current_block_index,
+                                                "content_block": tool_block
+                                            })
+                                            self._send_sse_event("content_block_delta", {
+                                                "type": "content_block_delta",
+                                                "index": current_block_index,
+                                                "delta": {
+                                                    "type": "input_json_delta",
+                                                    "partial_json": json.dumps(tool_block.get("input", {}))
+                                                }
+                                            })
+                                            self._send_sse_event("content_block_stop", {
+                                                "type": "content_block_stop",
+                                                "index": current_block_index
+                                            })
+                                    else:
+                                        # 没有解析到工具调用，正常发送thinking块结束事件
+                                        self._send_sse_event("content_block_stop", data)
+                                else:
+                                    # 未启用XML工具解析或没有thinking内容，正常发送thinking块结束事件
+                                    self._send_sse_event("content_block_stop", data)
+                                thinking_buffer = ""
                             else:
                                 self._send_sse_event("content_block_stop", data)
                             
@@ -358,17 +434,21 @@ class StreamHandler(AnthropicHandler):
         current_text = ""
         current_thinking = ""
         
+        current_input_json = ""
         for event_type, data in self.smart_raw_events:
             if event_type == "message_start":
                 response_message = data.get("message", {})
             elif event_type == "content_block_start":
                 current_block = data.get("content_block", {})
+                current_input_json = ""
             elif event_type == "content_block_delta":
                 delta = data.get("delta", {})
                 if current_block and current_block.get("type") == "text":
                     current_text += delta.get("text", "")
                 elif current_block and current_block.get("type") == "thinking":
                     current_thinking += delta.get("thinking", "")
+                elif current_block and current_block.get("type") == "tool_use" and delta.get("type") == "input_json_delta":
+                    current_input_json += delta.get("partial_json", "")
             elif event_type == "content_block_stop":
                 if current_block:
                     if current_block.get("type") == "text":
@@ -376,10 +456,18 @@ class StreamHandler(AnthropicHandler):
                     elif current_block.get("type") == "thinking":
                         content_blocks.append({"type": "thinking", "thinking": current_thinking})
                     elif current_block.get("type") == "tool_use":
+                        # 解析input_json并添加到tool_use块中（仅用于日志显示完整）
+                        if current_input_json:
+                            try:
+                                input_data = json.loads(current_input_json)
+                                current_block["input"] = input_data
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse tool_use input JSON: {current_input_json}")
                         content_blocks.append(current_block)
                     current_block = None
                     current_text = ""
                     current_thinking = ""
+                    current_input_json = ""
             elif event_type == "message_delta":
                 usage_data = data.get("usage", {})
                 stop_reason_data = data.get("delta", {}).get("stop_reason")

@@ -1,5 +1,27 @@
 # Router 更新日志
 
+## [Unreleased] - 2026-04-16
+
+### 📝 文档更新
+
+- **新增配置文件详细文档** (`CONFIG.md`)
+  - 详细说明 `config.json` 所有配置项
+  - 包含 `server`、`target`、`logging`、`features` 四大配置模块
+  - 添加 `compress_log_data` 功能详解
+  - 提供常见配置场景示例
+
+- **更新 README.md**
+  - 添加 CONFIG.md 文档引用链接
+  - 简化配置说明部分
+
+### 🐛 Bug 修复
+
+- **修复 Smart Streaming thinking 内容丢失** (`stream_handlers.py`)
+  - 添加 `thinking_buffer` 变量累积 thinking 内容
+  - 确保 thinking 块内容正确传递
+
+---
+
 ## [Unreleased] - 2026-04-13
 
 ### 🏗️ 代码重构
